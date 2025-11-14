@@ -10,6 +10,7 @@
 (define-constant err-insufficient-quantity (err u106))
 (define-constant err-invalid-product (err u107))
 (define-constant err-already-verified (err u108))
+(define-constant err-invalid-carbon-data (err u109))
 
 (define-data-var source-nonce uint u0)
 (define-data-var material-nonce uint u0)
@@ -91,6 +92,18 @@
 (define-map source-material-count
   uint
   uint
+)
+
+(define-map carbon-footprint
+  uint
+  {
+    transportation-emissions: uint,
+    processing-emissions: uint,
+    total-emissions: uint,
+    unit: (string-ascii 10),
+    recorded-at: uint,
+    recorded-by: principal
+  }
 )
 
 (define-public (register-source (name (string-ascii 50)) (location (string-ascii 100)) (source-type (string-ascii 30)))
@@ -273,6 +286,26 @@
   )
 )
 
+(define-public (record-carbon-footprint (batch-id uint) (transportation-emissions uint) (processing-emissions uint) (unit (string-ascii 10)))
+  (let
+    (
+      (batch (unwrap! (map-get? batches batch-id) err-not-found))
+      (total (+ transportation-emissions processing-emissions))
+    )
+    (asserts! (is-eq tx-sender (get current-owner batch)) err-unauthorized)
+    (asserts! (> total u0) err-invalid-carbon-data)
+    (map-set carbon-footprint batch-id {
+      transportation-emissions: transportation-emissions,
+      processing-emissions: processing-emissions,
+      total-emissions: total,
+      unit: unit,
+      recorded-at: stacks-block-height,
+      recorded-by: tx-sender
+    })
+    (ok total)
+  )
+)
+
 (define-read-only (get-source (source-id uint))
   (ok (map-get? sources source-id))
 )
@@ -321,6 +354,20 @@
   (ok (var-get product-nonce))
 )
 
+(define-read-only (get-batch-carbon-footprint (batch-id uint))
+  (ok (map-get? carbon-footprint batch-id))
+)
+
+(define-read-only (get-product-total-carbon-footprint (product-id uint))
+  (let
+    (
+      (product (unwrap! (map-get? products product-id) err-not-found))
+      (batch-ids (get batch-ids product))
+    )
+    (ok (fold sum-carbon-emissions batch-ids u0))
+  )
+)
+
 (define-private (is-valid-batch-list (batch-ids (list 10 uint)) (owner principal))
   (fold check-batch-owner batch-ids true)
 )
@@ -332,5 +379,12 @@
       false
     )
     false
+  )
+)
+
+(define-private (sum-carbon-emissions (batch-id uint) (accumulator uint))
+  (match (map-get? carbon-footprint batch-id)
+    footprint (+ accumulator (get total-emissions footprint))
+    accumulator
   )
 )
